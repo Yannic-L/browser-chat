@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    {% if alias == "Anonym User" %}
+        <title>
+            Choose your name/be anonym
+        </title>
+    {% else %}
+        <title>
+            Chatte als {{ alias }}
+        </title>
+    {% endif %}
+
+    <link rel="icon" type="image/x-icon"
+          href="https://images.vexels.com/media/users/3/136391/isolated/preview/521fe2f89980ad49695c27af4d9659dd-nachrichten-chat-symbol.png">
+    <link rel="stylesheet" href="mystyle.css">
+    <style>
+
+
+    </style>
+    <script src="jquery.js"></script>
+    <script>
+        OldestMessage = ({{ initalMessage }}+1);
+        window.onload = function () {
+            //findeNewMessges(lodeNewMessagesInTabel, '/update/ajax/new/' + NewestMessage);
+            findeNewMessges('/update/ajax/old/' + OldestMessage);
+        };
+
+
+       function findeNewMessges( url) {
+
+           $.ajax({
+               type: 'POST',
+               url: url,
+               dataType: 'json',
+               success: function (json) {
+                   console.log(url, json);
+                   for (let x in json) {
+                       addChatMessageTabelRoww(json[x], false)
+                       if (OldestMessage > (json[x].MessageTime)) {
+                           OldestMessage = (json[x].MessageTime);
+                           //console.log(OldestMessage);
+                       }
+                   }
+               },
+               error: function (err) {
+                   //console.log(err);
+               }
+           });
+
+       }
+
+
+        const pushNewMessages = new EventSource("{{ mercure('push-New-Messages')|escape('js') }}");
+        pushNewMessages.onmessage = event => {
+            console.log(JSON.parse(event.data));
+            addChatMessageTabelRoww((JSON.parse(event.data)), true);
+        }
+
+
+        $(function () {
+
+            $('form').on('submit', function (e) {
+                e.preventDefault();
+                $.ajax({
+                    type: 'post',
+                    data: $('form').serialize(),
+                    success: function () {
+                        window.history.replaceState({}, '', $('form').serializeArray()[1].value);
+                        $(document.getElementById("some-custom-id")).fadeOut();
+
+                    },
+                    error: function (err) {
+                        //console.log(err);
+                        alert('form was not submitted');
+                    }
+                });
+            });
+
+        });
+
+        function addChatMessageTabelRoww(Message, before) {
+            const milliseconds = Message.MessageTime * 1000;
+            const dateObject = new Date(milliseconds);
+            const humanDateFormat = dateObject.toLocaleString()
+            if (before == false) {
+                $('#chatBox').append($('<tr class="swing-in-top-fwd">')
+                    .append($('<td>').append(Message.Alias))
+                    .append($('<td>').append(Message.Message))
+                    .append($('<td>').append(humanDateFormat))
+                    .append($('<td>').append(Message.Id))
+                )
+            } else {
+                $('#chatBox').prepend($('<tr class="slide-left">')
+                    .append($('<td>').append(Message.Alias))
+                    .append($('<td>').append(Message.Message))
+                    .append($('<td>').append(humanDateFormat))
+                    .append($('<td>').append(Message.Id))
+                )
+            }
+        }
+
+    </script>
+
+</head>
+<body>
+
+{{ form_start(form) }}
+{{ form_errors(form) }}
+
+{{ form_row(form.message) }}
+<div id="some-custom-id">
+    {{ form_row(form.alias) }}
+</div>
+{{ form_row(form.save) }}
+{{ form_end(form) }}
+<div id="messages">
+    <table id="chatBox">
+
+    </table>
+</div>
+<input value="Load older" type="button" class="loadOlder"
+       onclick="findeNewMessges('/update/ajax/old/'+ OldestMessage)">
+</body>
+</html>

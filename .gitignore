@@ -1,0 +1,12 @@
+/vendor
+/translations
+/tests
+/migrations
+/dev-ops
+/config
+/components
+/bin
+/.idea
+/node_modules
+/public/bundles
+/assets

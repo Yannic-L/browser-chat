@@ -1,0 +1,137 @@
+version: '3'
+
+services:
+  traefik: #traefik image
+    image: traefik:v2.5 # image:version, https://docs.docker.com/compose/compose-file/compose-file-v3/#image
+    #command: --docker --docker.exposedbydefault=false # überschreibt den default-command, https://docs.docker.com/compose/compose-file/compose-file-v3/#command
+    ports: #reservierte port ranges, es können auch protokole und ips angegeben werden eg. 172.0.0.1:2324-23433/tcp, https://docs.docker.com/compose/compose-file/compose-file-v3/#ports
+      - "80:80" #standard http port
+      - "8080:8080" #traefik dashboard
+      - "61150:61150" #merc dashboard
+    #environment: #umgebungsvariablen für den container für standardwerte oder zur interaktion mit anderen images, eg. mysql connection data, https://docs.docker.com/compose/compose-file/compose-file-v3/#environment
+    #  TRAEFIK_HTTPS_COMPRESSION: 'false'
+    #  TRAEFIK_HTTP_COMPRESSION: 'false'
+    volumes: # mount paths für die app im image (ähnlich zu dem wie Linux systeme festplatten mounten?), https://docs.docker.com/compose/compose-file/compose-file-v3/#volumes
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - --api.insecure=true # traefik dashboard ist jetzt zugänglich (darf nur im dev env verwendet werden), https://doc.traefik.io/traefik/operations/api/
+      - --entryPoints.web.address=:80 # definiert einen neuen EntryPoint, https://doc.traefik.io/traefik/routing/entrypoints/
+      - --entryPoints.merc.address=:61150 # definiert einen neuen EntryPoint, https://doc.traefik.io/traefik/routing/entrypoints/
+      - --providers.docker=true # sagt Traefik, dass es um docker container geht, https://doc.traefik.io/traefik/routing/providers/docker/
+    #  rabbitmq:
+    #    image: bitnami/rabbitmq:latest
+    #    environment:
+    #      - RABBITMQ_PASSWORD=secret
+    #    volumes:
+    #      - /path/to/rabbitmq-persistence:/bitnami
+
+  rabbitmq:
+    image: rabbitmq:3.9.18-management
+    ports: [ "5672", "15672" ]
+    labels:
+      - traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.localhost`)
+      - traefik.http.routers.rabbitmq.entrypoints=web
+
+  app: #app image
+    image: thecodingmachine/php:8.0.14-v4-apache-node16 # image:version, https://docs.docker.com/compose/compose-file/compose-file-v3/#image
+    #    deploy:
+    #      resources:
+    #        limits:
+    #          memory: 4196M
+    labels: # meta daten übergeben
+      - traefik.enable=true # aktivierung der traefik komponente
+      # - traefik.backend=app # treafik interne zuweisung
+      - traefik.http.routers.app.rule=Host(`app.localhost`) # traefik url zuweisung
+    environment: #umgebungsvariablen für den container für standardwerte oder zur interaktion mit anderen images, eg. mysql connection data, https://docs.docker.com/compose/compose-file/compose-file-v3/#enviro
+      APACHE_DOCUMENT_ROOT: "public/" # umgebungsvariabel für das public directory (das öffentlich zugängliche verzeichnis)
+      PHP_EXTENSION_XDEBUG: "1" # aktivierung der erweiterung eines php debuggers - xdebug
+      PHP_INI_MEMORY_LIMIT: "6G" # die maximale erlaubte speichermenge, die ein php script belegen darf
+      PHP_EXTENSION_GD: "1" # aktivierung einer erweiterung, die grafiken dynamisch erstellen und bearbeiten kann - gd
+      PHP_EXTENSION_INTL: "1" # aktivierung einer erweiterung, die grafiken dynamisch erstellen und bearbeiten kann - gd
+      PHP_EXTENSIONS: intl curl amqp mbstring
+      # Symfony
+      APP_ENV: "dev" # art der entwicklungsumgebung für das symfony framework
+      APP_SECRET: "2adc7663dc7cfe6e32ac383d272baf8c"
+      DATABASE_URL: "mysql://symfony:symfony@mysql:3306/symfony" #db url
+      #Others
+      TZ: Europe/Berlin
+    volumes: # mount paths für die app im image, https://docs.docker.com/compose/compose-file/compose-file-v3/#volumes
+      - .:/var/www/html:rw
+    networks:
+      - default
+
+  mysql: # mysql image
+    image: mysql:latest # image:version, https://docs.docker.com/compose/compose-file/compose-file-v3/#image
+    environment: #umgebungsvariablen für den container für standardwerte oder zur interaktion mit anderen images, eg. mysql connection data, https://docs.docker.com/compose/compose-file/compose-file-v3/#enviro
+      MYSQL_ROOT_PASSWORD: "secret" # umgebungsvariabel für das mysql root passwort
+      MYSQL_DATABASE: "symfony" # umgebungsvariabel für die gewünschte db
+      MYSQL_USER: "symfony" # umgebungsvariabel für den mysql user
+      MYSQL_PASSWORD: "symfony" # umgebungsvariabel für das mysql user passwort
+    command: --max_allowed_packet=67108864 # erlaubte maximale größe einer SQL query
+    volumes: # mount paths für die app im image, https://docs.docker.com/compose/compose-file/compose-file-v3/#volumes
+      - mysql_data:/var/lib/mysql
+      - ./dev-ops/services/mysql/utf8mb4.cnf:/etc/mysql/conf.d/utf8mb4.cnf:ro
+
+  phpmyadmin: # myphpadmin image
+    image: phpmyadmin/phpmyadmin:5.1.1 # image:version, https://docs.docker.com/compose/compose-file/compose-file-v3/#image
+    labels: # meta daten übergeben
+      - traefik.enable=true
+      #- traefik.backend=phpmyadmi
+      #- traefik.frontend.rule=Host:phpmyadmin.localhost
+      - traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`) #http routingn für phpmyadmin anstatt .frontend.rule, https://doc.traefik.io/traefik/routing/routers/
+      - traefik.http.routers.phpmyadmin.entrypoints=web
+    environment: #umgebungsvariablen für den container für standardwerte oder zur interaktion mit anderen images, eg. mysql connection data, https://docs.docker.com/compose/compose-file/compose-file-v3/#enviro
+      PMA_HOST: "mysql" # myphpadmin host addresse
+      PMA_USER: "symfony" # myphpadmin user
+      PMA_PASSWORD: "symfony" # myphpadmin passwort für user
+    ports:
+      - '8079:80'
+
+  ###> symfony/mercure-bundle ###
+  mercure:
+    image: dunglas/mercure
+    restart: unless-stopped
+    labels: # meta daten übergeben
+      - traefik.enable=true # aktivierung der traefik komponente
+      # - traefik.backend=app # treafik interne zuweisung
+      - traefik.http.routers.mercury.rule=Host(`mercury.localhost`) # traefik url zuweisung
+      - traefik.http.routers.mercury.entrypoints=merc
+    environment:
+      SERVER_NAME: ':80'
+      MERCURE_PUBLISHER_JWT_KEY: 'eyJhbGciOiJIUzI1NiJ9.eyJtZXJjdXJlIjp7InB1Ymxpc2giOlsiKiJdLCJzdWJzY3JpYmUiOlsiaHR0cHM6Ly9leGFtcGxlLmNvbS9teS1wcml2YXRlLXRvcGljIiwie3NjaGVtZX06Ly97K2hvc3R9L2RlbW8vYm9va3Mve2lkfS5qc29ubGQiLCIvLndlbGwta25vd24vbWVyY3VyZS9zdWJzY3JpcHRpb25zey90b3BpY317L3N1YnNjcmliZXJ9Il0sInBheWxvYWQiOnsidXNlciI6Imh0dHBzOi8vZXhhbXBsZS5jb20vdXNlcnMvZHVuZ2xhcyIsInJlbW90ZUFkZHIiOiIxMjcuMC4wLjEifX19.z5YrkHwtkz3O_nOnhC_FP7_bmeISe3eykAkGbAl5K7c'
+      MERCURE_SUBSCRIBER_JWT_KEY: 'eyJhbGciOiJIUzI1NiJ9.eyJtZXJjdXJlIjp7InB1Ymxpc2giOlsiKiJdLCJzdWJzY3JpYmUiOlsiaHR0cHM6Ly9leGFtcGxlLmNvbS9teS1wcml2YXRlLXRvcGljIiwie3NjaGVtZX06Ly97K2hvc3R9L2RlbW8vYm9va3Mve2lkfS5qc29ubGQiLCIvLndlbGwta25vd24vbWVyY3VyZS9zdWJzY3JpcHRpb25zey90b3BpY317L3N1YnNjcmliZXJ9Il0sInBheWxvYWQiOnsidXNlciI6Imh0dHBzOi8vZXhhbXBsZS5jb20vdXNlcnMvZHVuZ2xhcyIsInJlbW90ZUFkZHIiOiIxMjcuMC4wLjEifX19.z5YrkHwtkz3O_nOnhC_FP7_bmeISe3eykAkGbAl5K7c'
+      # Set the URL of your Symfony project (without trailing slash!) as value of the cors_origins directive
+      MERCURE_EXTRA_DIRECTIVES: |
+        cors_origins http://app.localhost
+        anonymous
+    # Comment the following line to disable the development mode
+    command: /usr/bin/caddy run -config /etc/caddy/Caddyfile.dev
+    volumes:
+      - mercure_data:/data
+      - mercure_config:/config
+    networks:
+      - default
+###< symfony/mercure-bundle ###
+  ngrok:
+    image: wernight/ngrok:latest
+    restart: unless-stopped
+    labels:
+      - traefik.http.routers.ngrok.entrypoints=web
+    ports:
+      - 4040:4040
+    environment:
+      NGROK_AUTH: 2ECwN9FatBe7lw5rWUnZAW0hLyE_26dXB4a8CVKqHcuVEj1A4
+      NGROK_REGION: eu
+      NGROK_BINDTLS: "false"
+      NGROK_PROTOCOL: http
+      NGROK_PORT: http://app
+    networks:
+    - default
+
+volumes:
+  mysql_data:
+    driver: local
+  ###> symfony/mercure-bundle ###
+  mercure_data:
+  mercure_config:
+###< symfony/mercure-bundle ###
